@@ -9,6 +9,7 @@ extern "C"
 
 #include "LuaSys.h"
 #include "LuaUtils.h"
+#include "LuaDocs.h"
 
 #include "Misc/EmuBase.h"
 #include "Misc/GlobalConfig.h"
@@ -334,7 +335,7 @@ static int DrawOtherGraphicsViewScaled(lua_State *pState)
 	if (pGraphicsView == nullptr)
 		return 0;
 
-	FGraphicsView* pOtherGraphicsView = (FGraphicsView*)lua_touserdata(pState, 1 );
+	FGraphicsView* pOtherGraphicsView = (FGraphicsView*)lua_touserdata(pState, 2 );
 	if (pOtherGraphicsView == nullptr)
 		return 0;
 
@@ -375,6 +376,12 @@ static const luaL_Reg corelib[] =
 	{NULL, NULL}    // terminator
 };
 
+void AddCoreLibLuaDoc(void)
+{
+	FLuaDocLib& coreLuaDocLib = AddLuaDocLib("Core API");
+	LoadLuaDocLibFromJson(coreLuaDocLib, "Lua\\Docs\\LuaCoreAPIDocs.json");
+	coreLuaDocLib.Verify(corelib);
+}
 
 int luaopen_corelib(lua_State *pState)
 {

@@ -7,6 +7,7 @@ extern "C"
 #include <lualib.h>
 }
 
+#include "LuaScripting/LuaDocs.h"
 #include "Viewers/CPCGraphicsView.h"
 
 static int CreateCPCGraphicsView(lua_State *pState)
@@ -23,7 +24,6 @@ static int CreateCPCGraphicsView(lua_State *pState)
 	
 	return 1;
 }
-
 
 static int FreeGraphicsView(lua_State* pState)
 {
@@ -127,6 +127,13 @@ static const luaL_Reg graphicsViewMT[] =
 
 	{NULL, NULL}    // terminator
 };
+
+void AddCPCLibLuaDocs(void)
+{
+	FLuaDocLib& cpcLuaDocLib = AddLuaDocLib("CPC API");
+	LoadLuaDocLibFromJson(cpcLuaDocLib, "Lua\\Docs\\CPCLuaAPIDocs.json");
+	cpcLuaDocLib.Verify(cpclib);
+}
 
 int RegisterCPCLuaAPI(lua_State *pState)
 {

@@ -8,6 +8,7 @@ extern "C"
 }
 
 #include "Viewers/ZXGraphicsView.h"
+#include "LuaScripting/LuaDocs.h"
 
 static int CreateZXGraphicsView(lua_State *pState)
 {
@@ -130,15 +131,22 @@ static const luaL_Reg graphicsViewMT[] =
 	{NULL, NULL}    // terminator
 };
 
+void AddZXLibLuaDocs(void)
+{
+	FLuaDocLib& zxLuaDocLib = AddLuaDocLib("ZX Spectrum API");
+	LoadLuaDocLibFromJson(zxLuaDocLib, "Lua\\Docs\\SpectrumLuaAPIDocs.json");
+	zxLuaDocLib.Verify(spectrumlib);
+}
+
 int RegisterSpectrumLuaAPI(lua_State *pState)
 {
-    lua_getglobal(pState, "_G");
-    luaL_setfuncs(pState, spectrumlib, 0);  // for Lua versions 5.2 or greater
-    lua_pop(pState, 1);
+	lua_getglobal(pState, "_G");
+	luaL_setfuncs(pState, spectrumlib, 0);  // for Lua versions 5.2 or greater
+	lua_pop(pState, 1);
 
 	luaL_newmetatable(pState,"GraphicsViewMT");
 	luaL_setfuncs(pState, graphicsViewMT, 0);
 	lua_pop(pState, 1);
 
-    return 1;
+	return 1;
 }
