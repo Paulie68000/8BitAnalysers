@@ -83,7 +83,7 @@ void FGraphicsView::DrawMaskedCharLine(uint8_t charLine, uint8_t maskLine, int x
 	{
 		const bool bPixelSet = (charLine & (1 << (7 - xpix))) != 0;
 		const bool bMaskSet = (maskLine & (1 << (7 - xpix))) != 0;
-		const uint32_t col = bMaskSet ? 0xffff00ff : (bPixelSet ? inkCol : paperCol);
+		const uint32_t col = bMaskSet ? 0xffff00ff : (bPixelSet ? paperCol : inkCol);
 		if (col != 0x00000000)
 			*(pBase + xpix) = col;
 	}
