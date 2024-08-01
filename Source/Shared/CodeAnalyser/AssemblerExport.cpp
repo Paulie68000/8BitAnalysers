@@ -1,5 +1,8 @@
+#include "AssemblerExport.h"
+
 #include "CodeAnalyser/CodeAnalyser.h"
 #include "Util/Misc.h"
+#include "Misc/EmuBase.h"
 #include <util/z80dasm.h>
 #include "Debug/DebugLog.h"
 
@@ -8,73 +11,43 @@
 
 #include <CodeAnalyser/Z80/Z80Disassembler.h>
 #include "UI/CodeAnalyserUI.h"
+#include "Disassembler.h"
 
-struct FAssemblerConfig
-{
-	const char* DataBytePrefix = nullptr;
-	const char* DataWordPrefix = nullptr;
-	const char* DataTextPrefix = nullptr;
-};
 
-FAssemblerConfig g_DefaultAsmConfig = {
+FAssemblerConfig g_DefaultConfig = {
 	"db",
 	"dw",
-	"ascii"
+	"ascii",
+	"org",
 };
 
-FAssemblerConfig g_ez80AsmConfig = {
-	".db",
-	".dw",
-	"ascii"
-};
+static std::map<std::string, FASMExporter*> g_AssemblerExporters;
 
-// Class to encapsulate ASM exporting
-class FASMExporter
+const std::map<std::string, FASMExporter*>& GetAssemblerExporters()
 {
-	public:
-		FASMExporter(const char *pFilename, FCodeAnalysisState* pState);
-		~FASMExporter();
-
-		bool		Init();
-		void		Output(const char* pFormat, ...);
-		bool		ExportAddressRange(uint16_t startAddr, uint16_t endAddr);
-
-		std::string		GenerateAddressLabelString(FAddressRef addr);
-		void			ExportDataInfoASM(FAddressRef addr);
-
-	private:
-		void				OutputDataItemBytes(FAddressRef addr, const FDataInfo* pDataInfo);
-		ENumberDisplayMode	GetNumberDisplayModeForDataItem(const FDataInfo* pDataInfo);
-
-		bool			bInitialised = false;
-		ENumberDisplayMode HexMode = ENumberDisplayMode::HexDollar;
-		ENumberDisplayMode OldNumberMode;
-
-		std::string		Filename;
-		FILE*			FilePtr = nullptr;
-		FCodeAnalysisState*	pCodeAnalyser = nullptr;
-
-		FAssemblerConfig*	pAssemblerConfig;
-};
-
-FASMExporter::FASMExporter(const char* pFilename, FCodeAnalysisState* pState) 
-	: Filename(pFilename)
-	, pCodeAnalyser(pState) 
-{
-	pAssemblerConfig = &g_DefaultAsmConfig;
+	return g_AssemblerExporters;
 }
 
-FASMExporter::~FASMExporter()
+bool AddAssemblerExporter(const char* pName, FASMExporter* pExporter)
 {
-	if(FilePtr != nullptr)
-		fclose(FilePtr);
+	auto res = g_AssemblerExporters.insert({pName,pExporter });
 
-	SetNumberDisplayMode(OldNumberMode);
+	return res.second;
 }
 
-bool FASMExporter::Init()
+FASMExporter* GetAssemblerExporter(const char* pConfigName)
 {
-	FilePtr = fopen(Filename.c_str(), "wt");
+	auto findIt = g_AssemblerExporters.find(pConfigName);
+	if(findIt == g_AssemblerExporters.end())
+		return nullptr;
+	return findIt->second;
+}
+
+
+bool FASMExporter::Init(const char* pFilename, FCodeAnalysisState* pState)
+{
+	pCodeAnalyser = pState;
+	FilePtr = fopen(pFilename, "wt");
 
 	if (FilePtr == nullptr)
 		return false;
@@ -86,6 +59,16 @@ bool FASMExporter::Init()
 	return true;
 }
 
+bool FASMExporter::Finish()
+{
+	if (FilePtr != nullptr)
+		fclose(FilePtr);
+
+	SetNumberDisplayMode(OldNumberMode);
+	return true;
+}
+
+
 
 void FASMExporter::Output(const char* pFormat, ...)
 {
@@ -95,7 +78,7 @@ void FASMExporter::Output(const char* pFormat, ...)
 	va_end(ap);
 }
 
-
+#if 0
 // this might be a bit broken
 std::string FASMExporter::GenerateAddressLabelString(FAddressRef addr)
 {
@@ -132,6 +115,7 @@ std::string FASMExporter::GenerateAddressLabelString(FAddressRef addr)
 
 	return labelStr;
 }
+#endif
 
 uint16_t g_DbgAddress = 0xEA71;
 
@@ -165,7 +149,7 @@ void FASMExporter::OutputDataItemBytes(FAddressRef addr, const FDataInfo* pDataI
 
 		state.AdvanceAddressRef(byteAddress, 1);
 	}
-	Output("%s %s", pAssemblerConfig->DataBytePrefix, textString.c_str());
+	Output("%s %s", Config.DataBytePrefix, textString.c_str());
 }
 
 void FASMExporter::ExportDataInfoASM(FAddressRef addr)
@@ -196,28 +180,8 @@ void FASMExporter::ExportDataInfoASM(FAddressRef addr)
 	switch (outputDataType)
 	{
 	case EDataType::Byte:
-	/* {
-		const uint8_t val = state.ReadByte(addr);
-		Output("%s %s", pAssemblerConfig->DataBytePrefix, NumStr(val, dispMode));
-	}
-	break;*/
 	case EDataType::ByteArray:
-	{
 		OutputDataItemBytes(addr,pDataInfo);
-	/*
-		std::string textString;
-		FAddressRef byteAddress = addr;
-		for (int i = 0; i < pDataInfo->ByteSize; i++)
-		{
-			const uint8_t val = state.ReadByte(byteAddress);
-			char valTxt[16];
-			snprintf(valTxt, 16, "%s%c", NumStr(val, dispMode), i < pDataInfo->ByteSize - 1 ? ',' : ' ');
-			textString += valTxt;
-
-			state.AdvanceAddressRef(byteAddress,1);
-		}
-		Output("%s %s", pAssemblerConfig->DataBytePrefix, textString.c_str());*/
-	}
 	break;
 	case EDataType::Word:
 	{
@@ -226,11 +190,11 @@ void FASMExporter::ExportDataInfoASM(FAddressRef addr)
 		const FLabelInfo* pLabel = bOperandIsAddress ? state.GetLabelForPhysicalAddress(val) : nullptr;
 		if (pLabel != nullptr)
 		{
-			Output("%s %s", pAssemblerConfig->DataWordPrefix, pLabel->GetName());
+			Output("%s %s", Config.DataWordPrefix, pLabel->GetName());
 		}
 		else
 		{
-			Output("%s %s", pAssemblerConfig->DataWordPrefix, NumStr(val, dispMode));
+			Output("%s %s", Config.DataWordPrefix, NumStr(val, dispMode));
 		}
 	}
 	break;
@@ -252,6 +216,9 @@ void FASMExporter::ExportDataInfoASM(FAddressRef addr)
 	break;
 	case EDataType::Text:
 	{
+		OutputDataItemBytes(addr,pDataInfo);
+		// This old text export doesn't really work
+		/*
 		std::string textString;
 		FAddressRef charAddress = addr;
 		for (int i = 0; i < pDataInfo->ByteSize; i++)
@@ -261,6 +228,7 @@ void FASMExporter::ExportDataInfoASM(FAddressRef addr)
 			state.AdvanceAddressRef(charAddress,1);
 		}
 		Output("%s '%s'", pAssemblerConfig->DataTextPrefix, textString.c_str());
+		*/
 	}
 	break;
 
@@ -277,7 +245,8 @@ bool FASMExporter::ExportAddressRange(uint16_t startAddr , uint16_t endAddr)
 	FCodeAnalysisState& state = *pCodeAnalyser;
 	// TODO: write screen memory regions
 
-	Output(".org %s\n", NumStr(startAddr));
+	// place an 'org' at the start
+	Output("%s %s\n", Config.ORGText, NumStr(startAddr));
 
 	for (const FCodeAnalysisItem &item : pCodeAnalyser->ItemList)
 	{
@@ -305,7 +274,8 @@ bool FASMExporter::ExportAddressRange(uint16_t startAddr , uint16_t endAddr)
 			if (addr == g_DbgAddress)
 				LOGINFO("DebugAddress");
 
-			const std::string dasmString = Z80GenerateDasmStringForAddress(state, addr, HexMode);
+			const std::string dasmString = GenerateDasmStringForAddress(state, addr, HexMode);
+
 			Markup::SetCodeInfo(pCodeInfo);
 			const std::string expString = Markup::ExpandString(dasmString.c_str());
 			Output("\t%s", expString.c_str());
@@ -322,7 +292,6 @@ bool FASMExporter::ExportAddressRange(uint16_t startAddr , uint16_t endAddr)
 		break;
 		case EItemType::Data:
 		{
-			//const FDataInfo* pDataInfo = static_cast<FDataInfo*>(item.Item);
 			ExportDataInfoASM(item.AddressRef);
 		}
 		break;
@@ -348,14 +317,19 @@ bool FASMExporter::ExportAddressRange(uint16_t startAddr , uint16_t endAddr)
 
 bool ExportAssembler(FCodeAnalysisState& state, const char* pTextFileName, uint16_t startAddr, uint16_t endAddr)
 {
-	FASMExporter exporter(pTextFileName,&state);
-	if(exporter.Init() == false)
-		return false;
-		
-	if(exporter.ExportAddressRange(startAddr,endAddr) == false)
+	FASMExporter* pExporter = GetAssemblerExporter(state.pGlobalConfig->ExportAssembler.c_str());
+	if(pExporter == nullptr)
 		return false;
 
-	return true;
+	if(pExporter->Init(pTextFileName, &state) == false)
+		return false;
+
+	pExporter->AddHeader();
+		
+	const bool bSuccess = pExporter->ExportAddressRange(startAddr,endAddr);
+
+	pExporter->Finish();
+	return bSuccess;
 }
 
 // Util functions
