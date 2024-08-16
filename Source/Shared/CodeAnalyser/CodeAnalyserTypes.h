@@ -266,7 +266,17 @@ struct FLabelInfo : FItem
 		return true;
 	}
 
-	bool RemoveLabelName(const std::string& labelName)
+	void SanitizeName(void)
+	{
+		for (int i = 0; i < Name.size(); i++)
+		{
+			const char ch = Name[i];
+			if(ch == ' ')
+				Name[i] = '_';
+		}
+	}
+
+	static bool RemoveLabelName(const std::string& labelName)
 	{
 		auto labelIt = LabelUsage.find(labelName);
 		//assert(labelIt != LabelUsage.end());	// shouldn't happen - it does though - investigate
@@ -335,6 +345,7 @@ struct FCodeInfo : FItem
 			bool			bUnused : 1;
 			bool			bIsCall : 1;
 			bool			bHasLuaHandler : 1;
+			bool			bHasBreakpoint : 1;
 		};
 		uint32_t	Flags = 0;
 	};
@@ -411,6 +422,7 @@ struct FDataInfo : FItem
 			bool			bShowBinary : 1;	// display the value(s) as binary
 			bool			bShowCharMap : 1;	// display memory as character map
 			bool			bStructMember : 1;	// is item a member of a structure
+			bool			bHasBreakpoint : 1;	// data breakpoint
 		};
 		uint32_t	Flags = 0;
 	};

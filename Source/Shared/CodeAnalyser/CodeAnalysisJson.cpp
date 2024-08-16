@@ -434,6 +434,7 @@ FLabelInfo* CreateLabelInfoFromJson(const json& labelInfoJson)
 	FLabelInfo* pLabelInfo = FLabelInfo::Allocate();
 
 	pLabelInfo->InitialiseName(((std::string)labelInfoJson["Name"]).c_str());
+
 	if (labelInfoJson.contains("Global"))
 		pLabelInfo->Global = true;
 
@@ -558,6 +559,8 @@ void ReadPageFromJson(FCodeAnalysisState &state, FCodeAnalysisPage& page, const 
 		{
 			const uint16_t pageAddr = labelInfoJson["Address"];
 			FLabelInfo* pLabelInfo = CreateLabelInfoFromJson(labelInfoJson);
+			pLabelInfo->EnsureUniqueName();
+			pLabelInfo->SanitizeName();
 			page.Labels[pageAddr] = pLabelInfo;
 		}
 	}
@@ -619,6 +622,17 @@ void FixupPostLoad(FCodeAnalysisState& state)
 						pCodeInfo->Writes.RegisterAccess(dataRef);
 					else
 						LOGWARNING("Code at 0x%04X writing to 0x%04X not found",ref.Address,dataRef.Address);
+				}
+
+				// Fix up labels on instruction operands
+				FLabelInfo* pLabel = page.Labels[addr];
+				if (pLabel != nullptr && dataInfo.DataType == EDataType::InstructionOperand)
+				{
+					if(dataInfo.InstructionAddress != dataRef)	// is label inside instruction?
+					{
+						FLabelInfo::RemoveLabelName(pLabel->GetName());
+						page.Labels[addr] = nullptr;
+					}
 				}
 			}
 		}
