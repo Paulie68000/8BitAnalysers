@@ -147,7 +147,7 @@ bool AddMemoryRegionDescGenerator(FMemoryRegionDescGenerator* pGen)
 	return true;
 }
 
-void DrawSnippetToolTip(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState, const FAddressRef addr)
+void DrawSnippetToolTip(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState, const FAddressRef addr, int noLines /* = 10 */)
 {
 	// Bring up snippet in tool tip
 	const FCodeAnalysisBank* pBank = state.GetBank(addr.BankId);
@@ -156,10 +156,9 @@ void DrawSnippetToolTip(FCodeAnalysisState& state, FCodeAnalysisViewState& viewS
 		const int index = GetItemIndexForAddress(state, addr);
 		if (index != -1)
 		{
-			const int kToolTipNoLines = 10;
 			ImGui::BeginTooltip();
-			const int startIndex = std::max(index - (kToolTipNoLines / 2), 0);
-			for (int line = 0; line < kToolTipNoLines; line++)
+			const int startIndex = std::max(index - (noLines / 2), 0);
+			for (int line = 0; line < noLines; line++)
 			{
 				if (startIndex + line < (int)pBank->ItemList.size())
 					DrawCodeAnalysisItem(state, viewState, pBank->ItemList[startIndex + line]);
@@ -858,7 +857,7 @@ void ExpandCommentBlock(FCodeAnalysisState& state, FItemListBuilder& builder, FC
 	}
 }
 
-void UpdateItemListForBank(FCodeAnalysisState& state, FCodeAnalysisBank& bank)
+void UpdateItemListForBank(FCodeAnalysisState& state, FCodeAnalysisBank& bank, int startOffset)
 {
 	bank.ItemList.clear();
 	bank.CommentLineAllocator.FreeAll();
@@ -870,8 +869,8 @@ void UpdateItemListForBank(FCodeAnalysisState& state, FCodeAnalysisBank& bank)
 	int nextItemAddress = 0;
 
 	// This bank might start in the middle of an instruction from the previous bank
-	int bankStart = 0;
-	{
+	int bankStart = startOffset;
+	/* {
 		FDataInfo* pDataInfo = &bank.Pages[0].DataInfo[bankStart];
 		FCodeInfo* pCodeInfo = bank.Pages[0].CodeInfo[bankStart];
 		while(pCodeInfo == nullptr && pDataInfo->DataType == EDataType::InstructionOperand)
@@ -880,7 +879,7 @@ void UpdateItemListForBank(FCodeAnalysisState& state, FCodeAnalysisBank& bank)
 			pDataInfo = &bank.Pages[0].DataInfo[bankStart];
 			pCodeInfo = bank.Pages[0].CodeInfo[bankStart];
 		}
-	}
+	}*/
 	
 	for (int bankAddr = bankStart; bankAddr < bank.NoPages * FCodeAnalysisPage::kPageSize; bankAddr++)
 	{
@@ -937,13 +936,20 @@ void UpdateItemList(FCodeAnalysisState &state)
 		//int nextItemAddress = 0;
 
 		auto& banks = state.GetBanks();
+		int startOffset = 0;
 		for (auto& bank : banks)
 		{
 			if (bank.bIsDirty || bank.ItemList.empty())
 			{
-				UpdateItemListForBank(state, bank);
+				UpdateItemListForBank(state, bank, startOffset);
 				bank.bIsDirty = false;
 			}
+
+			// calculate start offset for next bank
+			const FCodeAnalysisItem& lastItem = bank.ItemList.back();
+			const int itemEndAddr = lastItem.AddressRef.Address + lastItem.Item->ByteSize;
+			const int bankEndAddr = (bank.PrimaryMappedPage + bank.NoPages) * FCodeAnalysisPage::kPageSize;
+			startOffset = itemEndAddr - bankEndAddr;
 		}
 		int pageNo = 0;
 
@@ -954,12 +960,6 @@ void UpdateItemList(FCodeAnalysisState &state)
 			if (pBank != nullptr)
 			{
 				state.ItemList.insert(state.ItemList.end(), pBank->ItemList.begin(), pBank->ItemList.end());
-				/*const uint16_t bankAddrStart = pageNo * FCodeAnalysisPage::kPageSize;
-				for (const auto& bankItem : pBank->ItemList)
-				{
-					FCodeAnalysisItem& item = state.ItemList.emplace_back(bankItem);
-					item.AddressRef.Address += bankAddrStart;
-				}*/
 				pageNo += pBank->NoPages;
 			}
 			else
@@ -1022,9 +1022,27 @@ void DoItemContextMenu(FCodeAnalysisState& state, const FCodeAnalysisItem &item)
 
 		if (item.Item->Type == EItemType::Label)
 		{
+			const FLabelInfo* pLabel = state.GetLabelForAddress(item.AddressRef);
+
 			if (ImGui::Selectable("Remove label"))
 			{
 				RemoveLabelAtAddress(state, item.AddressRef);
+			}
+
+			if(pLabel)
+			{
+				FEmuBase* pEmu = state.GetEmulator();
+
+				if(pEmu->IsLabelStubbed(pLabel->GetName()) == false)
+				{
+					if (ImGui::Selectable("Stub from ASM export"))
+						state.GetEmulator()->AddStubbedLabel(pLabel->GetName());
+				}
+				else
+				{
+					if (ImGui::Selectable("Remove stub from ASM export"))
+						state.GetEmulator()->RemoveStubbedLabel(pLabel->GetName());
+				}
 			}
 		}
 		else
@@ -1040,6 +1058,8 @@ void DoItemContextMenu(FCodeAnalysisState& state, const FCodeAnalysisItem &item)
 		{
 			if (ImGui::Selectable("Toggle Exec Breakpoint"))
 				state.ToggleExecBreakpointAtAddress(item.AddressRef);
+			if (ImGui::Selectable("Run until here")) 
+				state.Debugger.Continue(item.AddressRef);
 		}
 				
 		if (ImGui::Selectable("View in graphics viewer"))
@@ -1051,6 +1071,7 @@ void DoItemContextMenu(FCodeAnalysisState& state, const FCodeAnalysisItem &item)
 		{
 			state.GetEmulator()->CharacterMapViewerSetView(item.AddressRef);
 		}
+
 
 		ImGui::EndPopup();
 	}
@@ -1100,14 +1121,7 @@ void DrawCodeAnalysisItem(FCodeAnalysisState& state, FCodeAnalysisViewState& vie
 	}
 	DoItemContextMenu(state, item);
 
-	// double click to toggle breakpoints
-	if (ImGui::IsItemHovered() && viewState.HighlightAddress.IsValid() == false &&  ImGui::IsMouseDoubleClicked(0))
-	{
-		if (item.Item->Type == EItemType::Code)
-			state.ToggleExecBreakpointAtAddress(item.AddressRef);
-		else if (item.Item->Type == EItemType::Data)
-			state.ToggleDataBreakpointAtAddress(item.AddressRef, item.Item->ByteSize);
-	}
+	const bool bDoubleClickOnItem = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0);	// this will be used later for breakpoint toggling
 
 	ImGui::SetItemAllowOverlap();	// allow buttons
 	ImGui::SameLine();
@@ -1137,6 +1151,15 @@ void DrawCodeAnalysisItem(FCodeAnalysisState& state, FCodeAnalysisViewState& vie
 		break;
     default:
         break;
+	}
+
+	// double click to toggle breakpoints
+	if (bDoubleClickOnItem && viewState.HighlightAddress.IsValid() == false)
+	{
+		if (item.Item->Type == EItemType::Code)
+			state.ToggleExecBreakpointAtAddress(item.AddressRef);
+		else if (item.Item->Type == EItemType::Data)
+			state.ToggleDataBreakpointAtAddress(item.AddressRef, item.Item->ByteSize);
 	}
 
 	ImGui::PopID();
@@ -1331,21 +1354,23 @@ void DrawItemList(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState, 
 		const float currScrollY = ImGui::GetScrollY();
 		const float currWindowHeight = ImGui::GetWindowHeight();
 		const int kJumpViewOffset = 5;
-		for (int item = 0; item < (int)itemList.size(); item++)
+		for (int itemNo = 0; itemNo < (int)itemList.size(); itemNo++)
 		{
-			if ((itemList[item].AddressRef.Address >= gotoAddress.Address) && (viewState.GoToLabel || itemList[item].Item->Type != EItemType::Label))
+			const FCodeAnalysisItem& item = itemList[itemNo];
+
+			if ((item.AddressRef.Address >= gotoAddress.Address) && (viewState.GoToLabel || item.Item->Type != EItemType::Label) && item.Item->Type != EItemType::CommentLine)
 			{
 				// set cursor
-				viewState.SetCursorItem(itemList[item]);
+				viewState.SetCursorItem(item);
 
-				const float itemY = item * lineHeight;
+				const float itemY = itemNo * lineHeight;
 				const float margin = kJumpViewOffset * lineHeight;
 
 				const float moveDist = itemY - currScrollY;
 
 				if (moveDist > currWindowHeight)
 				{
-					const int gotoItem = std::max(item - kJumpViewOffset, 0);
+					const int gotoItem = std::max(itemNo - kJumpViewOffset, 0);
 					ImGui::SetScrollY(gotoItem * lineHeight);
 				}
 				else
@@ -2192,9 +2217,10 @@ void DrawCaptureTab(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState
 
 void DrawFindTab(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState)
 {
-	ImGui::InputText("##findText", &viewState.FindText);
+	bool bActivateFind = ImGui::InputText("##findText", &viewState.FindText, ImGuiInputTextFlags_EnterReturnsTrue);
 	ImGui::SameLine();
-	if (ImGui::Button("Find"))
+	bActivateFind |= ImGui::Button("Find");
+	if(bActivateFind)
 	{
 		viewState.FindResults = state.FindInAnalysis(viewState.FindText.c_str(),viewState.SearchROM);
 	}

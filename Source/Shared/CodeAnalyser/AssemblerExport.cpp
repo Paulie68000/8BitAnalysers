@@ -5,6 +5,7 @@
 #include "Misc/EmuBase.h"
 #include <util/z80dasm.h>
 #include "Debug/DebugLog.h"
+#include "Misc/GameConfig.h"
 
 #include <string.h>
 #include <stdarg.h>
@@ -44,9 +45,9 @@ FASMExporter* GetAssemblerExporter(const char* pConfigName)
 }
 
 
-bool FASMExporter::Init(const char* pFilename, FCodeAnalysisState* pState)
+bool FASMExporter::Init(const char* pFilename, FEmuBase* pEmu)
 {
-	pCodeAnalyser = pState;
+	pEmulator = pEmu;
 	FilePtr = fopen(pFilename, "wt");
 
 	if (FilePtr == nullptr)
@@ -54,7 +55,7 @@ bool FASMExporter::Init(const char* pFilename, FCodeAnalysisState* pState)
 
 	HeaderText.clear();
 	BodyText.clear();
-	DasmState.CodeAnalysisState = pCodeAnalyser;
+	DasmState.CodeAnalysisState = &pEmu->GetCodeAnalysis();
 	DasmState.HexDisplayMode = HexMode;
 
 	OldNumberMode = GetNumberDisplayMode();
@@ -95,6 +96,19 @@ void FASMExporter::Output(const char* pFormat, ...)
 	va_end(ap);
 }
 
+bool FASMExporter::IsLabelStubbed(const char* pLabelName) const
+{
+	const FProjectConfig* pConfig = pEmulator->GetProjectConfig();
+	const std::string labelName(pLabelName);
+	for (const auto& stub : pConfig->StubOutFunctions)
+	{
+		if(stub == labelName)
+			return true;
+	}
+
+	return false;
+}
+
 uint16_t g_DbgAddress = 0xEA71;
 
 void AppendCharToString(char ch, std::string& outString);
@@ -109,21 +123,34 @@ ENumberDisplayMode FASMExporter::GetNumberDisplayModeForDataItem(const FDataInfo
 		dispMode = HexMode;
 	if (pDataInfo->DisplayType == EDataItemDisplayType::Binary)
 		dispMode = ENumberDisplayMode::Binary;
+	if (pDataInfo->DisplayType == EDataItemDisplayType::Ascii)
+		dispMode = ENumberDisplayMode::Ascii;
 
 	return dispMode;
 }
 
 void FASMExporter::OutputDataItemBytes(FAddressRef addr, const FDataInfo* pDataInfo)
 {
-	FCodeAnalysisState& state = *pCodeAnalyser;
+	FCodeAnalysisState& state = pEmulator->GetCodeAnalysis();
 	std::string textString;
 	FAddressRef byteAddress = addr;
 	for (int i = 0; i < pDataInfo->ByteSize; i++)
 	{
 		const uint8_t val = state.ReadByte(byteAddress);
 		char valTxt[16];
-		snprintf(valTxt, 16, "%s%c", NumStr(val, GetNumberDisplayModeForDataItem(pDataInfo)), i < pDataInfo->ByteSize - 1 ? ',' : ' ');
+
+		ENumberDisplayMode dispMode = GetNumberDisplayModeForDataItem(pDataInfo);
+		if (dispMode == ENumberDisplayMode::Ascii)
+		{
+			if(val < 0x20 || val > 0x7E)
+				dispMode = HexMode;
+		}
+		
+		snprintf(valTxt, 16, "%s", NumStr(val, dispMode));
+
 		textString += valTxt;
+		if (i < pDataInfo->ByteSize - 1)
+			textString += ',';
 
 		state.AdvanceAddressRef(byteAddress, 1);
 	}
@@ -132,8 +159,8 @@ void FASMExporter::OutputDataItemBytes(FAddressRef addr, const FDataInfo* pDataI
 
 void FASMExporter::ExportDataInfoASM(FAddressRef addr)
 {
-	const FDataInfo* pDataInfo = pCodeAnalyser->GetDataInfoForAddress(addr);
-	FCodeAnalysisState& state = *pCodeAnalyser;
+	FCodeAnalysisState& state = pEmulator->GetCodeAnalysis();
+	const FDataInfo* pDataInfo = state.GetDataInfoForAddress(addr);
 
 	const ENumberDisplayMode dispMode = GetNumberDisplayModeForDataItem(pDataInfo);
 
@@ -194,9 +221,9 @@ void FASMExporter::ExportDataInfoASM(FAddressRef addr)
 	break;
 	case EDataType::Text:
 	{
-		OutputDataItemBytes(addr,pDataInfo);
+		//OutputDataItemBytes(addr,pDataInfo);
 		// This old text export doesn't really work
-		/*
+		
 		std::string textString;
 		FAddressRef charAddress = addr;
 		for (int i = 0; i < pDataInfo->ByteSize; i++)
@@ -205,8 +232,8 @@ void FASMExporter::ExportDataInfoASM(FAddressRef addr)
 			AppendCharToString(ch,textString);
 			state.AdvanceAddressRef(charAddress,1);
 		}
-		Output("%s '%s'", pAssemblerConfig->DataTextPrefix, textString.c_str());
-		*/
+		Output("%s \"%s\"", Config.DataTextPrefix, textString.c_str());
+		
 	}
 	break;
 
@@ -220,7 +247,7 @@ void FASMExporter::ExportDataInfoASM(FAddressRef addr)
 
 bool FASMExporter::ExportAddressRange(uint16_t startAddr , uint16_t endAddr)
 {
-	FCodeAnalysisState& state = *pCodeAnalyser;
+	FCodeAnalysisState& state = pEmulator->GetCodeAnalysis();
 
 	DasmState.ExportMin = startAddr;
 	DasmState.ExportMax = endAddr;
@@ -230,7 +257,9 @@ bool FASMExporter::ExportAddressRange(uint16_t startAddr , uint16_t endAddr)
 
 	Output("%s %s\n", Config.ORGText, NumStr(startAddr));
 
-	for (const FCodeAnalysisItem &item : pCodeAnalyser->ItemList)
+	uint16_t nextAddr = state.ItemList[0].AddressRef.Address;
+
+	for (const FCodeAnalysisItem &item : state.ItemList)
 	{
 		const uint16_t addr = item.AddressRef.Address;
 
@@ -240,12 +269,23 @@ bool FASMExporter::ExportAddressRange(uint16_t startAddr , uint16_t endAddr)
 		if (addr > endAddr)
 			break;
 
+		if (addr != nextAddr)
+		{
+			LOGERROR("Asm Export - Overlap. Addr = 0x%04X, Expecting  0x%04X",addr,nextAddr);
+		}
+
+		//Output("; 0x%04X\n", addr);
+		nextAddr = addr + item.Item->ByteSize;
+
 		switch (item.Item->Type)
 		{
 		case EItemType::Label:
 		{
 			const FLabelInfo* pLabelInfo = static_cast<FLabelInfo*>(item.Item);
-			Output("%s:", pLabelInfo->GetName());
+			if(IsLabelStubbed(pLabelInfo->GetName()))
+				Output("%s_Stubbed:", pLabelInfo->GetName());
+			else
+				Output("%s:", pLabelInfo->GetName());
 		}
 		break;
 		case EItemType::Code:
@@ -310,13 +350,14 @@ bool FASMExporter::ExportAddressRange(uint16_t startAddr , uint16_t endAddr)
 }
 
 
-bool ExportAssembler(FCodeAnalysisState& state, const char* pTextFileName, uint16_t startAddr, uint16_t endAddr)
+bool ExportAssembler(FEmuBase* pEmu, const char* pTextFileName, uint16_t startAddr, uint16_t endAddr)
 {
+	FCodeAnalysisState& state = pEmu->GetCodeAnalysis();
 	FASMExporter* pExporter = GetAssemblerExporter(state.pGlobalConfig->ExportAssembler.c_str());
 	if(pExporter == nullptr)
 		return false;
 
-	if(pExporter->Init(pTextFileName, &state) == false)
+	if(pExporter->Init(pTextFileName, pEmu) == false)
 		return false;
 
 	pExporter->SetOutputToHeader();
@@ -333,53 +374,62 @@ bool ExportAssembler(FCodeAnalysisState& state, const char* pTextFileName, uint1
 // There's probably a better way of doing this
 void AppendCharToString(char ch, std::string& outString)
 {
-	switch (ch)
+	bool bOutputEscapeCodes = false;
+
+	if(bOutputEscapeCodes)
 	{
-	case '\'':
-		outString+= "\\'";
-		break;
+		switch (ch)
+		{
+		case '\'':
+			outString+= "\\'";
+			break;
 
-	case '\"':
-		outString += "\\\"";
-		break;
+		case '\"':
+			outString += "\\\"";
+			break;
 
-	case '\?':
-		outString += "\\?";
-		break;
+		case '\?':
+			outString += "\\?";
+			break;
 
-	case '\\':
-		outString += "\\\\";
-		break;
+		case '\\':
+			outString += "\\\\";
+			break;
 
-	case '\a':
-		outString += "\\a";
-		break;
+		case '\a':
+			outString += "\\a";
+			break;
 
-	case '\b':
-		outString += "\\b";
-		break;
+		case '\b':
+			outString += "\\b";
+			break;
 
-	case '\f':
-		outString += "\\f";
-		break;
+		case '\f':
+			outString += "\\f";
+			break;
 
-	case '\n':
-		outString += "\\n";
-		break;
+		case '\n':
+			outString += "\\n";
+			break;
 
-	case '\r':
-		outString += "\\r";
-		break;
+		case '\r':
+			outString += "\\r";
+			break;
 
-	case '\t':
-		outString += "\\t";
-		break;
+		case '\t':
+			outString += "\\t";
+			break;
 
-	case '\v':
-		outString += "\\v";
-		break;
+		case '\v':
+			outString += "\\v";
+			break;
 
-	default:
+		default:
+			outString += ch;
+		}
+	}
+	else
+	{
 		outString += ch;
 	}
 }

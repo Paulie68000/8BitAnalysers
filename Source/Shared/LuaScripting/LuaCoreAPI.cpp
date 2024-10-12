@@ -294,6 +294,27 @@ static int SetDataItemDisplayType(lua_State* pState)
 	return 0;
 }
 
+static int AddDataLabel(lua_State* pState)
+{
+	FEmuBase* pEmu = LuaSys::GetEmulator();
+	if (pEmu == nullptr || lua_isinteger(pState, 1) == false)
+		return 0;
+	FCodeAnalysisState& state = pEmu->GetCodeAnalysis();
+	const FAddressRef addrRef = GetAddressRefFromLua(pState, 1);
+	if (addrRef.IsValid())
+	{
+		size_t length = 0;
+		const char* pText = luaL_tolstring(pState, 2, &length);
+
+		const int memoryRange = (int)luaL_optinteger(pState,3,1);
+
+		FLabelInfo* pLabel = AddLabel(state, addrRef, pText, ELabelType::Data,(uint16_t)memoryRange);
+		pLabel->Global = true;
+	}
+	return 0;
+}
+
+
 // Formatting
 
 // Generic format command
@@ -379,6 +400,7 @@ static int FormatMemoryAsCharMap(lua_State* pState)
 }
 
 
+
 // Gui related
 
 static int DrawAddressLabel(lua_State* pState)
@@ -450,9 +472,24 @@ static int SaveGraphicsView2222(lua_State* pState)
 
 	FEmuBase* pEmulator = LuaSys::GetEmulator();
 	const std::string gameRoot = pEmulator->GetGlobalConfig()->WorkspaceRoot + pEmulator->GetProjectConfig()->Name + "/";
-	const std::string fname = gameRoot + luaL_optstring(pState, 2, "temp2222.png");
+	const std::string fname = gameRoot + luaL_optstring(pState, 2, "temp2222.ag2");
+	const bool bUseAlpha = lua_toboolean(pState,3);
 
-	pGraphicsView->Save2222(fname.c_str());
+	pGraphicsView->Save2222(fname.c_str(), bUseAlpha);
+	return 0;
+}
+
+static int SaveGraphicsViewBitmap(lua_State* pState)
+{
+	FGraphicsView* pGraphicsView = (FGraphicsView*)lua_touserdata(pState, 1);
+	if (pGraphicsView == nullptr)
+		return 0;
+
+	FEmuBase* pEmulator = LuaSys::GetEmulator();
+	const std::string gameRoot = pEmulator->GetGlobalConfig()->WorkspaceRoot + pEmulator->GetProjectConfig()->Name + "/";
+	const std::string fname = gameRoot + luaL_optstring(pState, 2, "tempbitmap.agb");
+
+	pGraphicsView->SaveBitmap(fname.c_str());
 	return 0;
 }
 
@@ -493,6 +530,7 @@ static const luaL_Reg corelib[] =
 	{"SetCodeItemComment", SetCodeItemComment},
 	{"AddCommentBlock", AddCommentBlock},
 	{"SetDataItemDisplayType", SetDataItemDisplayType},
+	{"AddDataLabel", AddDataLabel},
 	// Formatting
 	{"FormatMemory", FormatMemory},
 	{"FormatMemoryAsBitmap", FormatMemoryAsBitmap},
@@ -505,6 +543,7 @@ static const luaL_Reg corelib[] =
 	{"DrawGraphicsView", DrawGraphicsView},
 	{"SaveGraphicsViewPNG", SaveGraphicsViewPNG},
 	{"SaveGraphicsView2222", SaveGraphicsView2222},
+	{"SaveGraphicsViewBitmap", SaveGraphicsViewBitmap},
 	{"DrawOtherGraphicsViewScaled", DrawOtherGraphicsViewScaled},
 
 	{NULL, NULL}    // terminator

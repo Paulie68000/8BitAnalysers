@@ -701,6 +701,7 @@ FLabelInfo* GenerateLabelForAddress(FCodeAnalysisState &state, FAddressRef addre
             }
 
             snprintf(label, kLabelSize, "%s%s", pPrefix, labelString.c_str());
+			pLabel->Global = true;
         }
         break;
         default:
@@ -1054,7 +1055,7 @@ void ResetReferenceInfo(FCodeAnalysisState &state, bool bReads, bool bWrites)
 }
 
 // TODO: Phase this out
-FLabelInfo* AddLabel(FCodeAnalysisState &state, uint16_t address,const char *name,ELabelType type)
+FLabelInfo* AddLabel(FCodeAnalysisState &state, uint16_t address,const char *name,ELabelType type, uint16_t memoryRange)
 {
 	FLabelInfo *pLabel = FLabelInfo::Allocate();
 	pLabel->InitialiseName(name);
@@ -1062,6 +1063,7 @@ FLabelInfo* AddLabel(FCodeAnalysisState &state, uint16_t address,const char *nam
 	//pLabel->Address = address;
 	pLabel->ByteSize = 1;
 	pLabel->Global = type == ELabelType::Function;
+	pLabel->MemoryRange = memoryRange;
 	pLabel->EnsureUniqueName();
 	state.SetLabelForPhysicalAddress(address, pLabel);
 
@@ -1071,7 +1073,7 @@ FLabelInfo* AddLabel(FCodeAnalysisState &state, uint16_t address,const char *nam
 	return pLabel;
 }
 
-FLabelInfo* AddLabel(FCodeAnalysisState& state, FAddressRef address, const char* name, ELabelType type)
+FLabelInfo* AddLabel(FCodeAnalysisState& state, FAddressRef address, const char* name, ELabelType type, uint16_t memoryRange)
 {
 	FLabelInfo* pLabel = FLabelInfo::Allocate();
 	pLabel->InitialiseName(name);
@@ -1079,6 +1081,7 @@ FLabelInfo* AddLabel(FCodeAnalysisState& state, FAddressRef address, const char*
 	//pLabel->Address = address;
 	pLabel->ByteSize = 1;
 	pLabel->Global = type == ELabelType::Function;
+	pLabel->MemoryRange = memoryRange;
 	state.SetLabelForAddress(address, pLabel);
 
 	if (pLabel->Global)

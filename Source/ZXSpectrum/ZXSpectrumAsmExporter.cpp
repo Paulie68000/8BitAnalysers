@@ -6,7 +6,7 @@ class FSpeccyAsmExporterBase : public FASMExporter
 	public:
 		void ProcessLabelsOutsideExportedRange(void) override
 		{
-			FCodeAnalysisState& state = *pCodeAnalyser;
+			FCodeAnalysisState& state = pEmulator->GetCodeAnalysis();
 
 			SetOutputToHeader();
 
@@ -39,17 +39,29 @@ public:
 	{
 		Config.DataBytePrefix = "db";
 		Config.DataWordPrefix = "dw";
-		Config.DataTextPrefix = "ascii";
+		Config.DataTextPrefix = "db";
 		Config.ORGText = "\torg";
 		Config.EQUText = "equ";
 	}
 
 	void AddHeader(void) override
 	{
-		Output("\tdevice zxspectrum48\n");	// only 48k spectrum asm dumps are supported atm
+		Output("\tDEVICE ZXSPECTRUM48\n");	// only 48k spectrum asm dumps are supported atm
+	}
+};
+
+class FSpectrumNextExporter : public FSJasmPlusExporter
+{
+public:
+	FSpectrumNextExporter() : FSJasmPlusExporter()
+	{
+
 	}
 
-
+	void AddHeader(void) override
+	{
+		Output("\tDEVICE ZXSPECTRUMNEXT\n");	
+	}
 };
 
 class FSpasmExporter : public FSpeccyAsmExporterBase
@@ -72,7 +84,7 @@ public:
 	{
 		Config.DataBytePrefix = ".db";
 		Config.DataWordPrefix = ".dw";
-		Config.DataTextPrefix = ".text";
+		Config.DataTextPrefix = ".db";
 		Config.ORGText = ".org";
 		Config.EQUText = ".equ";
 	}
@@ -96,5 +108,6 @@ bool InitZXSpectrumAsmExporters(FSpectrumEmu *pZXEmu)
 	AddAssemblerExporter("SJasmPlus", new FSJasmPlusExporter);
 	AddAssemblerExporter("Spasm", new FSpasmExporter);
 	AddAssemblerExporter("Agon", new FAgonAsmExporter);
+	AddAssemblerExporter("SpectrumNext", new FSpectrumNextExporter);
 	return true;
 }

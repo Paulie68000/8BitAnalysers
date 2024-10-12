@@ -57,7 +57,7 @@ void FGraphicsViewer::Reset(void)
 
 	ClickedAddress = FAddressRef();
 	ViewMode = EGraphicsViewMode::Bitmap;
-	ViewScale = 1;
+	//ViewScale = 1;
 	bYSizePixelsFineCtrl = false;
 
 	ImageSetName = "";
@@ -113,15 +113,17 @@ void FGraphicsViewer::GoToAddress(FAddressRef address)
 
 uint16_t FGraphicsViewer::GetAddressOffsetFromPositionInView(int x, int y) const
 {
-	const int scaledViewWidth = kGraphicsViewerWidth / ViewScale;
-	const int scaledViewHeight = kGraphicsViewerHeight / ViewScale;
+	const FCodeAnalysisState& state = GetCodeAnalysis();
+	FGlobalConfig* pConfig = state.pGlobalConfig;
+
+	const int scaledViewWidth = kGraphicsViewerWidth / pConfig->GfxViewerScale;
+	const int scaledViewHeight = kGraphicsViewerHeight / pConfig->GfxViewerScale;
 	// Deal with odd ViewScale values, when there is a gap between the bottom of the graphic column and the edge of the view. 
 	const int roundedViewHeight = (scaledViewHeight / 8) * 8;
-	const int scaledX = x / ViewScale;
-	const int scaledY = y / ViewScale;
+	const int scaledX = x / pConfig->GfxViewerScale;
+	const int scaledY = y / pConfig->GfxViewerScale;
 
 	const int xSizeChars = XSizePixels >> 3;
-	const FCodeAnalysisState& state = GetCodeAnalysis();
 	const int kHorizontalDispCharCount = (scaledViewWidth / 8);
 	const FCodeAnalysisBank* pBank = state.GetBank(Bank);
 	const uint16_t addrInput = AddressOffset;
@@ -174,9 +176,10 @@ uint32_t GetHeatmapColourForMemoryAddress(const FCodeAnalysisPage& page, uint16_
 void FGraphicsViewer::DrawPhysicalMemoryAsGraphicsColumn(uint16_t memAddr, int xPos, int columnWidth)
 {
 	const FCodeAnalysisState& state = GetCodeAnalysis();
+	FGlobalConfig* pConfig = state.pGlobalConfig;
 
 	const int kVerticalDispPixCount = kGraphicsViewerHeight;
-	const int scaledVDispPixCount = kVerticalDispPixCount / ViewScale;
+	const int scaledVDispPixCount = kVerticalDispPixCount / pConfig->GfxViewerScale;
 	const int ycount = scaledVDispPixCount / YSizePixels;
 	const uint32_t* pPaletteColours = GetPaletteFromPaletteNo(PaletteNo);
 	const ICPUInterface* pCPUInterface = state.GetCPUInterface();
@@ -242,9 +245,10 @@ void FGraphicsViewer::DrawPhysicalMemoryAsGraphicsColumn(uint16_t memAddr, int x
 void FGraphicsViewer::DrawPhysicalMemoryAsGraphicsColumnChars(uint16_t memAddr, int xPos, int columnWidth)
 {
 	const FCodeAnalysisState& state = GetCodeAnalysis();
+	FGlobalConfig* pConfig = state.pGlobalConfig;
 
 	const int kVerticalDispPixCount = kGraphicsViewerHeight;
-	const int scaledVDispPixCount = kVerticalDispPixCount / ViewScale;
+	const int scaledVDispPixCount = kVerticalDispPixCount / pConfig->GfxViewerScale;
 	const int ycount = scaledVDispPixCount / 8;
 	const uint32_t* pPaletteColours = GetPaletteFromPaletteNo(PaletteNo);
 	const ICPUInterface* pCPUInterface = state.GetCPUInterface();
@@ -261,7 +265,7 @@ void FGraphicsViewer::DrawPhysicalMemoryAsGraphicsColumnChars(uint16_t memAddr, 
 					const FCodeAnalysisPage* pPage = state.GetReadPage(memAddr);
 					const uint32_t col = GetHeatmapColourForMemoryAddress(*pPage, memAddr, state.CurrentFrameNo, HeatmapThreshold);
 					const uint32_t cols[] = { 0, col };
-					pGraphicsView->Draw1BppImageAt(pPixels, xPos + (xChar * 8), y * 8, 8, 8, cols);
+					pGraphicsView->Draw1BppImageAt(pPixels, xPos + (xChar * 8), y * 8, 8, 8, cols,1);
 					memAddr += 8;
 				}
 				break;
@@ -298,11 +302,13 @@ void FGraphicsViewer::DrawPhysicalMemoryAsGraphicsColumnChars(uint16_t memAddr, 
 void FGraphicsViewer::DrawMemoryBankAsGraphicsColumn(int16_t bankId, uint16_t memAddr, int xPos, int columnWidth)
 {
 	const FCodeAnalysisState& state = GetCodeAnalysis();
+	FGlobalConfig* pConfig = state.pGlobalConfig;
+
 	const FCodeAnalysisBank* pBank = state.GetBank(bankId);
 	const uint16_t bankSizeMask = pBank->SizeMask;
 
 	const int kVerticalDispPixCount = kGraphicsViewerHeight;
-	const int scaledVDispPixCount = kVerticalDispPixCount / ViewScale;
+	const int scaledVDispPixCount = kVerticalDispPixCount / pConfig->GfxViewerScale;
 	const int ycount = scaledVDispPixCount / YSizePixels;
 	const uint32_t* pPaletteColours = GetPaletteFromPaletteNo(PaletteNo);
 
@@ -357,11 +363,13 @@ void FGraphicsViewer::DrawMemoryBankAsGraphicsColumn(int16_t bankId, uint16_t me
 void FGraphicsViewer::DrawMemoryBankAsGraphicsColumnChars(int16_t bankId, uint16_t memAddr, int xPos, int columnWidth)
 {
 	const FCodeAnalysisState& state = GetCodeAnalysis();
+	FGlobalConfig* pConfig = state.pGlobalConfig;
+
 	const FCodeAnalysisBank* pBank = state.GetBank(bankId);
 	const uint16_t bankSizeMask = pBank->SizeMask;
 
 	const int kVerticalDispPixCount = kGraphicsViewerHeight;
-	const int scaledVDispPixCount = kVerticalDispPixCount / ViewScale;
+	const int scaledVDispPixCount = kVerticalDispPixCount / pConfig->GfxViewerScale;
 	const int ycount = scaledVDispPixCount / 8;
 	const uint32_t* pPaletteColours = GetPaletteFromPaletteNo(PaletteNo);
 
@@ -378,7 +386,7 @@ void FGraphicsViewer::DrawMemoryBankAsGraphicsColumnChars(int16_t bankId, uint16
 				FCodeAnalysisPage& page = pBank->Pages[bankAddr >> FCodeAnalysisPage::kPageShift];
 				const uint32_t col = GetHeatmapColourForMemoryAddress(page, memAddr, state.CurrentFrameNo, HeatmapThreshold);
 				const uint32_t cols[] = { 0, col};
-				pGraphicsView->Draw1BppImageAt(pPixels, xPos + (xChar * 8), y * 8, 8, 8, cols);
+				pGraphicsView->Draw1BppImageAt(pPixels, xPos + (xChar * 8), y * 8, 8, 8, cols,1);
 				memAddr+=8;
 			}
 			break;
@@ -467,6 +475,7 @@ bool StepInt(const char* title, int& val, int stepAmount)
 void FGraphicsViewer::UpdateCharacterGraphicsViewerImage(void)
 {
 	const FCodeAnalysisState& state = GetCodeAnalysis();
+	FGlobalConfig* pConfig = state.pGlobalConfig;
 
 	const int widthFactor = IsBitmapFormatDoubleWidth(BitmapFormat) ? 2 : 1;
 	const int kColumnWidthPixels = 8 * widthFactor;
@@ -474,8 +483,8 @@ void FGraphicsViewer::UpdateCharacterGraphicsViewerImage(void)
 	const int kHorizontalDispCharCount = kGraphicsViewerWidth / kColumnWidthPixels;
 	const int kVerticalDispPixCount = kGraphicsViewerHeight;
 
-	const int scaledHDispCharCount = kHorizontalDispCharCount / ViewScale;
-	const int scaledVDispPixCount = kVerticalDispPixCount / ViewScale;
+	const int scaledHDispCharCount = kHorizontalDispCharCount / pConfig->GfxViewerScale;
+	const int scaledVDispPixCount = kVerticalDispPixCount / pConfig->GfxViewerScale;
 	
 	const int xcount = scaledHDispCharCount / (XSizePixels / 8);
 	const int ycount = scaledVDispPixCount / YSizePixels;
@@ -625,12 +634,13 @@ void FGraphicsViewer::DrawCharacterGraphicsViewer(void)
 	//ImGui::Combo("ViewMode", (int*)&ViewMode, "Bitmap\0BitmapChars\0BitmapWinding", (int)EGraphicsViewMode::Count);
 
 	// View Scale
-	ImGui::InputInt("Scale", &ViewScale, 1, 1);
-	ViewScale = std::max(1, ViewScale);	// clamp
+	int& viewScale = state.pGlobalConfig->GfxViewerScale;
+	ImGui::InputInt("Scale", &viewScale, 1, 1);
+	viewScale = std::max(1, viewScale);	// clamp
 
 	const int widthFactor = IsBitmapFormatDoubleWidth(BitmapFormat) ? 2 : 1;
-	const int viewSizeX = XSizePixels * ViewScale * widthFactor;
-	const int viewSizeY = YSizePixels * ViewScale;
+	const int viewSizeX = XSizePixels * viewScale * widthFactor;
+	const int viewSizeY = YSizePixels * viewScale;
 	const int xChars = XSizePixels >> 3;
 
 	// Address input
@@ -640,7 +650,7 @@ void FGraphicsViewer::DrawCharacterGraphicsViewer(void)
 
 	// Zoomed graphics view - put into class?
 	const ImVec2 uv0(0, 0);
-	const ImVec2 uv1(1.0f / (float)ViewScale, 1.0f / (float)ViewScale);
+	const ImVec2 uv1(1.0f / (float)viewScale, 1.0f / (float)viewScale);
 	const ImVec2 size((float)kGraphicsViewerWidth * scale, (float)kGraphicsViewerHeight * scale);
 	pGraphicsView->UpdateTexture();
 	ImGui::Image((void*)pGraphicsView->GetTexture(), size, uv0, uv1);
@@ -652,7 +662,7 @@ void FGraphicsViewer::DrawCharacterGraphicsViewer(void)
 
 		ImDrawList* dl = ImGui::GetWindowDrawList();
 		const int rx = (xp / viewSizeX) * viewSizeX;
-		const int ry = (yp / ViewScale) * ViewScale;
+		const int ry = (yp / viewScale) * viewScale;
 		const float rxp = pos.x + (float)rx * scale;
 		const float ryp = pos.y + (float)ry * scale;
 		dl->AddRect(ImVec2(rxp, ryp), ImVec2(rxp + (float)viewSizeX * scale, ryp + (float)viewSizeY * scale), 0xff00ffff);
@@ -678,8 +688,8 @@ void FGraphicsViewer::DrawCharacterGraphicsViewer(void)
 		
 		// show magnifier
 		const float magAmount = 8.0f;
-		const int magXP = rx / ViewScale;// ((int)(io.MousePos.x - pos.x) / viewSizeX)* viewSizeX;
-		const int magYP = ry / ViewScale;//std::max((int)(io.MousePos.y - pos.y - (viewSizeY / 2)), 0);
+		const int magXP = rx / viewScale;// ((int)(io.MousePos.x - pos.x) / viewSizeX)* viewSizeX;
+		const int magYP = ry / viewScale;//std::max((int)(io.MousePos.y - pos.y - (viewSizeY / 2)), 0);
 		const ImVec2 magSize(XSizePixels * magAmount * widthFactor, YSizePixels * magAmount);
 		const ImVec2 magUV0(magXP * (1.0f/ kGraphicsViewerWidth), magYP * (1.0f / kGraphicsViewerHeight));
 		const ImVec2 magUV1(magUV0.x + XSizePixels * widthFactor * (1.0f / kGraphicsViewerWidth), magUV0.y + YSizePixels * (1.0f / kGraphicsViewerHeight));
@@ -784,7 +794,7 @@ void FGraphicsViewer::DrawCharacterGraphicsViewer(void)
 	if (ImageCount > 0)
 	{
 		ImDrawList* dl = ImGui::GetWindowDrawList();
-		const int scaledVDispPixCount = kVerticalDispPixCount / ViewScale;
+		const int scaledVDispPixCount = kVerticalDispPixCount / viewScale;
 		const int ycount = scaledVDispPixCount / YSizePixels;
 
 		for (int i = 0; i < ImageCount; i++)
@@ -1060,7 +1070,7 @@ void FGraphicsViewer::DrawGraphicToView(const FGraphicsSet& set, FGraphicsView* 
 				case EBitmapFormat::Bitmap_1Bpp:
 				{
 					const uint8_t charLine = state.ReadByte(itemAddress);
-					pView->DrawCharLine(charLine, x + (xp * 8), y + yp, 0xffffffff, 0);
+					pView->DrawCharLine(charLine, x + (xp * 8), y + yp, 0xffffffff, 0xff000000);
 					state.AdvanceAddressRef(itemAddress, 1);
 					break;
 				}
@@ -1088,7 +1098,7 @@ bool FGraphicsViewer::ExportGraphicSet(const FGraphicsSet& set)
 {
 	const int maxImageXSize = 256;
 	const int maxImagesX = maxImageXSize / set.XSizePixels;
-	const int noImagesX = set.Count % maxImagesX;
+	const int noImagesX = maxImagesX;
 	const int noImagesY = (set.Count / maxImagesX) + 1;
 
 	FGraphicsView* pSaveImage = new FGraphicsView(set.XSizePixels * noImagesX, set.YSizePixels * noImagesY);
@@ -1099,7 +1109,7 @@ bool FGraphicsViewer::ExportGraphicSet(const FGraphicsSet& set)
 	for (int imageNo = 0; imageNo < set.Count; imageNo++)
 	{
 		const int x = (imageNo % noImagesX) * set.XSizePixels;
-		const int y = (imageNo / noImagesX) / set.YSizePixels;
+		const int y = (imageNo / noImagesX) * set.YSizePixels;
 
 		DrawGraphicToView(set, pSaveImage, imageNo, x, y);
 	}

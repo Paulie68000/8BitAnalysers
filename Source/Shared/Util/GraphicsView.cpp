@@ -70,7 +70,7 @@ void FGraphicsView::DrawCharLine(uint8_t charLine, int xp, int yp, uint32_t inkC
 	{
 		const bool bSet = (charLine & (1 << (7 - xpix))) != 0;
 		const uint32_t col = bSet ? inkCol : paperCol;
-		if (col != 0xFF000000)
+		//if (col != 0xFF000000)
 			*(pBase + xpix) = col;
 	}
 }
@@ -83,35 +83,40 @@ void FGraphicsView::DrawMaskedCharLine(uint8_t charLine, uint8_t maskLine, int x
 	{
 		const bool bPixelSet = (charLine & (1 << (7 - xpix))) != 0;
 		const bool bMaskSet = (maskLine & (1 << (7 - xpix))) != 0;
-		const uint32_t col = bMaskSet ? 0xffff00ff : (bPixelSet ? paperCol : inkCol);
-		if (col != 0x00000000)
+		const uint32_t col = bMaskSet ? 0xffff00ff : (bPixelSet ? inkCol : paperCol);
+		//if (col != 0x00000000)
 			*(pBase + xpix) = col;
 	}
 }
 
 
-void FGraphicsView::Draw1BppImageAt(const uint8_t* pSrc, int xp, int yp, int widthPixels, int heightPixels, const uint32_t* cols, int stride)
+void FGraphicsView::Draw1BppImageAt(const uint8_t* pSrc, int xp, int yp, int widthPixels, int heightPixels, const uint32_t* cols, int stride, bool bMask)
 {
 	uint32_t* pBase = PixelBuffer + (xp + (yp * Width));
 	int widthChars = widthPixels / 8;
 	assert((widthPixels & 7) == 0);	// we don't currently support sub character widths - maybe you should implement it?
 
+	if(stride == -1)
+		stride = widthPixels / 8;
+
 	for (int y = 0; y < heightPixels; y++)
 	{
+		const uint8_t* pLine = pSrc;
 		for (int x = 0; x < widthChars; x++)
 		{
-			const uint8_t charLine = *pSrc;
-			pSrc+=stride;
+			const uint8_t charLine = *pLine++;
 
 			for (int xpix = 0; xpix < 8; xpix++)
 			{
 				const bool bSet = (charLine & (1 << (7 - xpix))) != 0;
 				const uint32_t col = bSet ? cols[1] : cols[0];
-				if (col != 0xFF000000)
+				//if (col != 0xFF000000)
+				if(bSet || bMask == false)
 					*(pBase + xpix + (x * 8)) = col;
 			}
 		}
 
+		pSrc += stride;
 		pBase += Width;
 	}
 }
@@ -249,7 +254,7 @@ void FGraphicsView::Draw1BppImageFromCharsAt(const uint8_t* pSrc, int xp, int yp
 	{
 		for (int x = 0; x < widthChars; x++)
 		{
-			Draw1BppImageAt(pSrc, xp + (x * 8), yp + (y * 8), 8, 8, cols);
+			Draw1BppImageAt(pSrc, xp + (x * 8), yp + (y * 8), 8, 8, cols,1);
 			pSrc+=8;
 		}
 	}
@@ -274,7 +279,17 @@ bool FGraphicsView::SavePNG(const char* pFName)
 	return ret == 1;
 }
 
-bool FGraphicsView::Save2222(const char* pFName)
+uint8_t ConvertTo2Bpp(uint8_t val)
+{
+	if(val == 0)	
+		return 0;	// black
+	if(val == 0xff)
+		return 3;	// full bright
+	else
+		return 2;	// half bright
+}
+
+bool FGraphicsView::Save2222(const char* pFName,bool bUseAlpha)
 {
 	FILE* fp = fopen(pFName,"wb");
 	if(fp == nullptr)
@@ -284,18 +299,50 @@ bool FGraphicsView::Save2222(const char* pFName)
 
 	for (int i = 0; i < Width * Height; i++)
 	{
-		uint32_t pix8888 = *pPixel++;
-		uint8_t pix2222 =
-			(((pix8888 >> 30) & 3) << 6) |	// A
-			(((pix8888 >> 22) & 3) << 0) |	// B
-			(((pix8888 >> 14) & 3) << 4) |	// G
-			(((pix8888 >> 6) & 3) << 2);	// R
+		const uint32_t pix8888 = *pPixel++;
+		const uint8_t a = bUseAlpha ? (pix8888 >> 24) & 255 : 0xff;
+		const uint8_t b = (pix8888 >> 16) & 255;
+		const uint8_t g = (pix8888 >> 8) & 255;
+		const uint8_t r = (pix8888 >> 0) & 255;
+
+		const uint8_t pix2222 =
+			(ConvertTo2Bpp(a) << 6) |	// A
+			(ConvertTo2Bpp(b) << 4) |	// B
+			(ConvertTo2Bpp(g) << 2) |	// G
+			(ConvertTo2Bpp(r) << 0);	// R
+
 		fwrite(&pix2222,1,1,fp);
 	}
 
 	fclose(fp);
 	return true;
 }
+
+// 1 bit per pixel
+bool FGraphicsView::SaveBitmap(const char* pFName)
+{
+	FILE* fp = fopen(pFName, "wb");
+	if (fp == nullptr)
+		return false;
+
+	const uint32_t* pPixel = PixelBuffer;	//ABGR
+
+	for (int i = 0; i < (Width / 8) * Height; i++)
+	{
+		uint8_t pixelLine = 0;
+		for (int bit = 7; bit >= 0; bit--)
+		{
+			if(*pPixel++ != 0)
+				pixelLine |= 1 << bit;
+		}
+
+		fwrite(&pixelLine, 1, 1, fp);
+	}
+
+	fclose(fp);
+	return true;
+}
+
 
 
 void DisplayTextureInspector(const ImTextureID texture, float width, float height, bool bMagnifier)
@@ -480,7 +527,7 @@ void DrawCharacterSetImage1Bpp(FCodeAnalysisState& state, FCharacterSet& charact
 			cols[1] = GetColFromAttr((colAttr >> inkShift) & inkMask, characterSet.Params.ColourLUT, bBright);
 		}
 
-		characterSet.Image->Draw1BppImageAt(charPix, xp, yp, 8, 8, cols);
+		characterSet.Image->Draw1BppImageAt(charPix, xp, yp, 8, 8, cols,1);
 	}
 }
 
