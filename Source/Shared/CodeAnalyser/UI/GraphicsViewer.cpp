@@ -32,6 +32,7 @@ bool FGraphicsViewer::Init()
 	pGraphicsView = new FGraphicsView(kGraphicsViewerWidth, kGraphicsViewerHeight);
 	pScreenView = new FGraphicsView(ScreenWidth, ScreenHeight);
 	pItemView = new FGraphicsView(kMaxImageSize, kMaxImageSize);
+	pBufferView = new FGraphicsView(kMaxImageSize, kMaxImageSize);
 	return true;
 }
 
@@ -43,6 +44,8 @@ void FGraphicsViewer::Shutdown(void)
 	pScreenView = nullptr;
 	delete pItemView;
 	pItemView = nullptr;
+	delete pBufferView;
+	pBufferView = nullptr;
 }
 
 void FGraphicsViewer::Reset(void)
@@ -64,6 +67,9 @@ void FGraphicsViewer::Reset(void)
 
 	GraphicsSets.clear();
 	SelectedGraphicSet = FAddressRef();
+
+	OffScreenBuffers.clear();
+	SelectedOffscreenBuffer = std::string();
 
 	ItemNo = 0;
 	ImageGraphicSet = FAddressRef();
@@ -111,6 +117,35 @@ void FGraphicsViewer::GoToAddress(FAddressRef address)
 	}
 }
 
+uint16_t FGraphicsViewer::GetAddressOffsetFromPositionInBuffer(const FOffScreenBuffer& buffer, int x, int y) const
+{
+	const FCodeAnalysisState& state = GetCodeAnalysis();
+	FGlobalConfig* pConfig = state.pGlobalConfig;
+	const int scaledX = x / pConfig->GfxViewerScale;
+	const int scaledY = y / pConfig->GfxViewerScale;
+
+	const int xSizeChars = buffer.XSizePixels >> 3;
+
+	return (scaledX / 8) + (scaledY * xSizeChars);
+}
+
+bool GetPositionInBufferFromAddress(const FOffScreenBuffer& buffer, FAddressRef address, int& x, int& y)
+{
+	if(address.BankId != buffer.Address.BankId)
+		return false;
+	if(address.Address < buffer.Address.Address)
+		return false;
+	if(address.Address >= buffer.Address.Address + buffer.GetByteSize())
+		return false;
+
+	// TODO: this only works for linear bitmap modes
+	const uint16_t byteOffset = address.Address - buffer.Address.Address;
+	const uint16_t bufferStride = buffer.XSizePixels / 8;
+	x = (byteOffset % bufferStride) * 8;
+	y = byteOffset / bufferStride;
+	return true;
+}
+
 uint16_t FGraphicsViewer::GetAddressOffsetFromPositionInView(int x, int y) const
 {
 	const FCodeAnalysisState& state = GetCodeAnalysis();
@@ -142,6 +177,8 @@ uint16_t FGraphicsViewer::GetAddressOffsetFromPositionInView(int x, int y) const
 	return (addrInput + (column * columnSize * (bpp / widthFactor)) + (scaledY * xSizeChars * bpp)) % MemorySize;
 }
 
+
+
 uint32_t GetHeatmapColourForMemoryAddress(const FCodeAnalysisPage& page, uint16_t addr, int currentFrameNo, int frameThreshold)
 {
 	const uint16_t pageAddress = addr & FCodeAnalysisPage::kPageMask;
@@ -171,6 +208,16 @@ uint32_t GetHeatmapColourForMemoryAddress(const FCodeAnalysisPage& page, uint16_
 	}
 
 	return 0xFFFFFFFF;
+}
+
+uint32_t GetHeatmapColourForMemoryAddress(const FCodeAnalysisState& state, FAddressRef addr, int currentFrameNo, int frameThreshold)
+{
+	const FCodeAnalysisBank* pBank = state.GetBank(addr.BankId);
+	const uint16_t bankSizeMask = pBank->SizeMask;
+	const uint16_t bankAddr = addr.Address & bankSizeMask;
+	FCodeAnalysisPage& page = pBank->Pages[bankAddr >> FCodeAnalysisPage::kPageShift];
+
+	return GetHeatmapColourForMemoryAddress(page, bankAddr, currentFrameNo, frameThreshold);
 }
 
 void FGraphicsViewer::DrawPhysicalMemoryAsGraphicsColumn(uint16_t memAddr, int xPos, int columnWidth)
@@ -444,6 +491,11 @@ void FGraphicsViewer::DrawUI()
 			if (ImGui::BeginTabItem("Screen"))
 			{
 				DrawScreenViewer();
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Off Screen Buffers"))
+			{
+				DrawOffScreenBufferViewer();
 				ImGui::EndTabItem();
 			}
 		}
@@ -785,6 +837,20 @@ void FGraphicsViewer::DrawCharacterGraphicsViewer(void)
 	// clamp sizes
 	XSizePixels = std::min(std::max(8, XSizePixels), kMaxImageSize);
 	YSizePixels = std::min(std::max(1, YSizePixels), kMaxImageSize);
+
+	// Options to add off screen buffer
+	ImGui::InputText("Off-Screen Buffer",&OffScreenBufferName);
+	ImGui::SameLine();
+	if (ImGui::Button("Add"))
+	{
+		// Add off-screen buffer
+		FOffScreenBuffer newBuffer;
+		newBuffer.Name = OffScreenBufferName;
+		newBuffer.XSizePixels = XSizePixels;
+		newBuffer.YSizePixels = YSizePixels;
+		newBuffer.Address = state.AddressRefFromPhysicalAddress(addrInput);
+		AddOffScreenBuffer(newBuffer);
+	}
 	
 	ImGui::InputInt("Count", &ImageCount, 1, 1);
 
@@ -981,7 +1047,197 @@ void FGraphicsViewer::DrawCharacterGraphicsViewer(void)
 
 }
 
+bool FGraphicsViewer::AddOffScreenBuffer(const FOffScreenBuffer& newBuffer)
+{
+	// make sure one of the same name doesn't already exist
+	for (const auto& buffer : OffScreenBuffers)
+	{
+		if(buffer.Name == newBuffer.Name)
+			return false;
+	}
 
+	OffScreenBuffers.push_back(newBuffer);
+	return true;
+}
+
+FOffScreenBuffer* FGraphicsViewer::GetOffscreenBuffer(const char* pName)
+{
+	for (auto& buffer : OffScreenBuffers)
+	{
+		if (buffer.Name == pName)
+			return &buffer;
+	}
+
+	return nullptr;
+}
+
+void DrawBitmapLine(ImVec2 pos, uint8_t val)
+{
+	const float line_height = ImGui::GetTextLineHeight();
+	float rectSize = line_height + 4;
+	ImDrawList* dl = ImGui::GetWindowDrawList();
+	for (int bit = 7; bit >= 0; bit--)
+	{
+		const ImVec2 rectMin(pos.x, pos.y);
+		const ImVec2 rectMax(pos.x + rectSize, pos.y + rectSize);
+		if (val & (1 << bit))
+			dl->AddRectFilled(rectMin, rectMax, 0xffffffff);
+		else if (rectSize > 4)
+			dl->AddRect(rectMin, rectMax, 0xffffffff);
+
+		pos.x += rectSize;
+	}
+}
+
+void FGraphicsViewer::DrawOffScreenBufferViewer(void)
+{
+	FCodeAnalysisState& state = GetCodeAnalysis();
+	FCodeAnalysisViewState& viewState = state.GetFocussedViewState();
+
+	const float scale = ImGui_GetScaling();
+
+	if (ImGui::BeginChild("OffScreenBufferList", ImVec2(100 * scale, 0), true))
+	{
+		for (const auto& buffer : OffScreenBuffers)
+		{
+			bool bSelected = buffer.Name == SelectedOffscreenBuffer;
+			ImGui::PushID(buffer.Address.Val);
+			if (ImGui::Selectable(buffer.Name.c_str(), &bSelected))
+			{
+				//ImageSetName = set.Name;
+				SelectedOffscreenBuffer = buffer.Name;
+				//GoToAddress(buffer.Address);
+				//state.GetFocussedViewState().GoToAddress(buffer.Address);
+			}
+			ImGui::PopID();
+		}
+	}
+	ImGui::EndChild();
+	ImGui::SameLine();
+	if (ImGui::BeginChild("OffScreenBufferDisplay", ImVec2(0, 0), true))
+	{
+		FOffScreenBuffer* pBuffer = GetOffscreenBuffer(SelectedOffscreenBuffer.c_str());
+
+		if(pBuffer != nullptr)
+		{
+			// View Scale
+			int& viewScale = state.pGlobalConfig->GfxViewerScale;
+			ImGui::InputInt("Scale", &viewScale, 1, 1);
+			viewScale = std::max(1, viewScale);	// clamp
+
+			const ImVec2 uv0(0, 0);
+			const ImVec2 uv1(1.0f / (float)viewScale, 1.0f / (float)viewScale);
+			const ImVec2 size((float)kMaxImageSize * scale, (float)kMaxImageSize * scale);
+			ImGuiIO& io = ImGui::GetIO();
+			ImVec2 pos = ImGui::GetCursorScreenPos();
+			//const int widthFactor = 1;//IsBitmapFormatDoubleWidth(BitmapFormat) ? 2 : 1;
+
+			pBufferView->UpdateTexture();
+			ImGui::Image((void*)pBufferView->GetTexture(), size, uv0, uv1);
+
+			// TODO: hover behaviour
+			if (ImGui::IsItemHovered())
+			{
+				const int xp = (int)((io.MousePos.x - pos.x) / scale);
+				const int yp = (int)((io.MousePos.y - pos.y) / scale);
+
+				ImDrawList* dl = ImGui::GetWindowDrawList();
+
+				// TODO: draw axis line instead?
+				const int rx = (xp / viewScale) * viewScale;
+				const int ry = (yp / viewScale) * viewScale;
+				const float rxp = pos.x + (float)rx * scale;
+				const float ryp = pos.y + (float)ry * scale;
+				//dl->AddRect(ImVec2(rxp, ryp), ImVec2(rxp + (float)viewSizeX * scale, ryp + (float)viewSizeY * scale), 0xff00ffff);
+				dl->AddLine(ImVec2(rxp, pos.y), ImVec2(rxp, pos.y + (float)pBuffer->YSizePixels * scale), 0xff00ffff, 2.0f);
+				dl->AddLine(ImVec2(pos.x, ryp), ImVec2(pos.x + (float)pBuffer->XSizePixels * scale, ryp), 0xff00ffff, 2.0f);
+
+				ImGui::BeginTooltip();
+				const uint16_t gfxAddressOffset = GetAddressOffsetFromPositionInBuffer(*pBuffer, rx, ry);
+				FAddressRef ptrAddress = pBuffer->Address;
+				state.AdvanceAddressRef(ptrAddress, gfxAddressOffset);
+
+				if (ImGui::IsMouseClicked(0))
+					ClickedAddress = ptrAddress;
+
+				ImGui::Text("%s", NumStr(ptrAddress.Address));
+				ImGui::SameLine();
+				DrawAddressLabel(state, state.GetFocussedViewState(), ptrAddress);
+
+				// show magnifier
+				const int magnifierSize = 64 * viewScale;
+				const float magAmount = 4.0f;
+				const int magXP = rx / viewScale;
+				const int magYP = ry / viewScale;
+				const ImVec2 magSize(magnifierSize * magAmount, magnifierSize * magAmount);
+				const ImVec2 magUV0(magXP * (1.0f / kMaxImageSize), magYP * (1.0f / kMaxImageSize));
+				const ImVec2 magUV1(magUV0.x + magnifierSize * (1.0f / kMaxImageSize), magUV0.y + magnifierSize * (1.0f / kMaxImageSize));
+				const ImVec2 magPos = ImGui::GetCursorScreenPos();
+				const ImVec2 magHighlightPos = ImVec2(magPos.x,magPos.y);
+				ImGui::Image((void*)pBufferView->GetTexture(), magSize, magUV0, magUV1);
+				dl->AddRect(ImVec2(magHighlightPos.x, magHighlightPos.y),ImVec2(magHighlightPos.x + (8 * magAmount * viewScale), magHighlightPos.y + (1 * magAmount * viewScale)),0xff0000ff);
+				DrawBitmapLine(ImGui::GetCursorScreenPos(), state.ReadByte(ptrAddress));
+				ImGui::Text("\n");	// bodge
+
+				ImGui::EndTooltip();
+			}
+
+			const float kNumSize = 80.0f * scale;	// size for number GUI widget
+			ImGui::SetNextItemWidth(kNumSize);
+			ImGui::InputInt("XSize", &pBuffer->XSizePixels, 8, 8);
+			ImGui::SetNextItemWidth(kNumSize);
+			ImGui::InputInt("YSize", &pBuffer->YSizePixels, 8, 8);
+
+			DrawAddressLabel(state, state.GetFocussedViewState(), pBuffer->Address);
+
+			if (ClickedAddress.IsValid())
+			{
+				const FDataInfo* pDataInfo = state.GetDataInfoForAddress(ClickedAddress);
+				DrawBitmapLine(ImGui::GetCursorScreenPos(),state.ReadByte(ClickedAddress));
+				
+				DrawAddressLabel(state, viewState, ClickedAddress);
+				DrawDataAccesses(state, viewState, pDataInfo);
+
+				// Draw clicked location with axis lines
+				int xPos = 0;
+				int yPos = 0;
+				if (GetPositionInBufferFromAddress(*pBuffer, ClickedAddress, xPos, yPos))
+				{
+					ImDrawList* dl = ImGui::GetWindowDrawList();
+					const int rx = xPos * viewScale;
+					const int ry = yPos * viewScale;
+					const float rxp = pos.x + (float)rx * scale;
+					const float ryp = pos.y + (float)ry * scale;
+					dl->AddLine(ImVec2(rxp, pos.y), ImVec2(rxp, pos.y + (float)pBuffer->YSizePixels * scale), 0xff00ff00, 2.0f);
+					dl->AddLine(ImVec2(rxp + 8 * scale, pos.y), ImVec2(rxp + 8 * scale, pos.y + (float)pBuffer->YSizePixels * scale), 0xff00ff00, 2.0f);
+					dl->AddLine(ImVec2(pos.x, ryp), ImVec2(pos.x + (float)pBuffer->XSizePixels * scale, ryp), 0xff00ff00, 2.0f);
+				}
+			}
+			
+			FAddressRef itemAddress = pBuffer->Address;
+
+			pBufferView->Clear();
+
+			// Update image
+			// TODO: support other modes
+			for (int y = 0; y < pBuffer->YSizePixels; y++)
+			{
+				for (int x = 0; x < pBuffer->XSizePixels; x += 8)
+				{
+					const uint8_t charLine = state.ReadByte(itemAddress);
+					uint32_t col = GetHeatmapColourForMemoryAddress(state,itemAddress, state.CurrentFrameNo, HeatmapThreshold);
+					if (viewState.HighlightAddress == itemAddress)
+						col = 0xff00ff00;
+
+					pBufferView->DrawCharLine(charLine, x, y, col, 0);
+					state.AdvanceAddressRef(itemAddress, 1);
+				}
+			}
+			
+		}
+	}
+	ImGui::EndChild();
+}
 
 // Save/Load Graphics sets to json
 #include <iomanip>
@@ -1007,6 +1263,18 @@ bool FGraphicsViewer::SaveGraphicsSets(const char* pJsonFileName)
 		graphicsSetJson["ImageCount"] = set.Count;
 
 		jsonGraphicsSets["GraphicsSets"].push_back(graphicsSetJson);
+	}
+
+	for (const auto& offscreenBuffer : OffScreenBuffers)
+	{
+		json offscreenBufferJson;
+		offscreenBufferJson["Name"] = offscreenBuffer.Name;
+		offscreenBufferJson["AddressRef"] = offscreenBuffer.Address.Val;
+		offscreenBufferJson["XSizePixels"] = offscreenBuffer.XSizePixels;
+		offscreenBufferJson["YSizePixels"] = offscreenBuffer.YSizePixels;
+		offscreenBufferJson["Format"] = (int)offscreenBuffer.Format;
+
+		jsonGraphicsSets["OffScreenBuffers"].push_back(offscreenBufferJson);
 	}
 
 	// Write file out
@@ -1046,6 +1314,23 @@ bool FGraphicsViewer::LoadGraphicsSets(const char* pJsonFileName)
 			set.YSizePixels = graphicsSetJson["YSizePixels"];
 			set.Count = graphicsSetJson["ImageCount"];
 			GraphicsSets[set.Address] = set;
+		}
+	}
+
+	if (jsonGraphicsSets.contains("OffScreenBuffers"))
+	{
+		OffScreenBuffers.clear();
+
+		for (const auto& offscreenBuffersJson : jsonGraphicsSets["OffScreenBuffers"])
+		{
+			FOffScreenBuffer offscreenBuffer;
+			offscreenBuffer.Name = offscreenBuffersJson["Name"];
+			offscreenBuffer.Address.Val = offscreenBuffersJson["AddressRef"];
+			offscreenBuffer.XSizePixels = offscreenBuffersJson["XSizePixels"];
+			offscreenBuffer.YSizePixels = offscreenBuffersJson["YSizePixels"];
+			offscreenBuffer.Format = (EOffScreenBufferFormat)offscreenBuffersJson["Format"];
+
+			OffScreenBuffers.push_back(offscreenBuffer);
 		}
 	}
 

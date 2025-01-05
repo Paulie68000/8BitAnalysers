@@ -166,6 +166,8 @@ void DrawSnippetToolTip(FCodeAnalysisState& state, FCodeAnalysisViewState& viewS
 			ImGui::EndTooltip();
 		}
 	}
+
+	viewState.pLabelScope = nullptr;
 }
 
 // TODO: phase this out
@@ -224,10 +226,12 @@ std::string GenerateAddressLabelString(FCodeAnalysisState& state, FAddressRef ad
 
 bool DrawAddressLabel(FCodeAnalysisState &state, FCodeAnalysisViewState& viewState, FAddressRef addr, uint32_t displayFlags)
 {
+	char localLabelString[64];
 	bool bFunctionRel = false;
 	bool bToolTipShown = false;
 	int labelOffset = 0;
 	const char *pLabelString = GetRegionDesc(addr);
+	const FLabelInfo* pAddressScope = state.GetScopeForAddress(addr);
 	FCodeAnalysisBank* pBank = state.GetBank(addr.BankId);
 	if(pBank == nullptr)
 		return false;
@@ -255,7 +259,15 @@ bool DrawAddressLabel(FCodeAnalysisState &state, FCodeAnalysisViewState& viewSta
 
 				if (bFunctionRel == false || pLabel->LabelType == ELabelType::Function)
 				{
-					pLabelString = pLabel->GetName();
+					if (pLabel->Global == false && pAddressScope != nullptr && pAddressScope != viewState.pLabelScope)	// TODO: check if this is our scope
+					{
+						snprintf(localLabelString,64,"%s.%s", pAddressScope->GetName(), pLabel->GetName());
+						pLabelString = localLabelString;
+					}
+					else
+					{
+						pLabelString = pLabel->GetName();
+					}
 					break;
 				}
 			}
@@ -417,7 +429,7 @@ void DrawLabelDetails(FCodeAnalysisState &state, FCodeAnalysisViewState& viewSta
 		if (LabelText.empty())
 			LabelText = pLabelInfo->GetName();
 
-		pLabelInfo->ChangeName(LabelText.c_str());
+		pLabelInfo->ChangeName(LabelText.c_str(),item.AddressRef);
 	}
 
 	if(ImGui::Checkbox("Global", &pLabelInfo->Global))
@@ -809,7 +821,7 @@ void UpdatePopups(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState)
 		std::string LabelText = pLabel->GetName();
 		if (ImGui::InputText("##comment", &LabelText, ImGuiInputTextFlags_EnterReturnsTrue))
 		{
-			pLabel->ChangeName(LabelText.c_str());
+			pLabel->ChangeName(LabelText.c_str(),cursorItem.AddressRef);
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SetItemDefaultFocus();
@@ -1083,6 +1095,8 @@ void DrawCodeAnalysisItem(FCodeAnalysisState& state, FCodeAnalysisViewState& vie
 
 	if (item.IsValid() == false)
 		return;
+
+	viewState.pLabelScope = state.GetScopeForAddress(item.AddressRef);
 
 	// TODO: item below might need bank check
 	bool bHighlight = (viewState.HighlightAddress.IsValid() && viewState.HighlightAddress.Address >= physAddr && viewState.HighlightAddress.Address < physAddr + item.Item->ByteSize);
@@ -1407,6 +1421,7 @@ void DrawItemList(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState, 
 
 	}
 	viewState.AddressCoords = newList;
+	viewState.pLabelScope = nullptr;
 }
 
 #define NEWBANKVIEW 1

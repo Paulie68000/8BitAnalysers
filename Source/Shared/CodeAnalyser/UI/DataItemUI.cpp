@@ -12,6 +12,7 @@
 #include "UIColours.h"
 #include "ComboBoxes.h"
 #include <ImGuiSupport/ImGuiScaling.h>
+#include "Z80/DataItemZ80.h"
 
 float DrawDataCharMapLine(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState, FAddressRef addr, const FDataInfo* pDataInfo)
 {
@@ -68,6 +69,8 @@ float DrawDataCharMapLine(FCodeAnalysisState& state, FCodeAnalysisViewState& vie
 	return pos.x;
 
 }
+
+
 
 // returns how much space it took
 float DrawDataBitmapLine(FCodeAnalysisState& state, uint16_t addr, const FDataInfo* pDataInfo, bool bEditMode)
@@ -692,10 +695,17 @@ void DrawDataInfo(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState, 
 		state.GetDataTypes()->DrawStructMember(pDataInfo->SubTypeId, pDataInfo->StructByteOffset, false);
 	}
 
-	if (state.CPUInterface->GetSP() == physAddr)
+	if (state.CPUInterface->CPUType == ECPUType::Z80)
 	{
-		ImGui::SameLine();
-		ImGui::Text("<- SP");
+		DrawDataItemRegisterPtrsZ80(state, physAddr);
+	}
+	else
+	{
+		if (state.CPUInterface->GetSP() == physAddr)
+		{
+			ImGui::SameLine();
+			ImGui::Text("<- SP");
+		}
 	}
 
 	SetNumberDisplayMode(trueNumberDisplayMode);
@@ -763,7 +773,7 @@ void DrawDataValueGraphWord(FCodeAnalysisState& state, FAddressRef addressRef)
 }
 
 
-void DrawDataAccesses(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState, FDataInfo* pDataInfo)
+void DrawDataAccesses(FCodeAnalysisState& state, FCodeAnalysisViewState& viewState, const FDataInfo* pDataInfo)
 {
 	// List Data accesses
 	if (pDataInfo->Reads.IsEmpty() == false)

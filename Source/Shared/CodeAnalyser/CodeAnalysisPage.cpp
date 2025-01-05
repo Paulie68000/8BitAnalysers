@@ -9,7 +9,7 @@
 //#include "json.hpp"
 std::vector<FCodeInfo*>		FCodeInfo::AllocatedList;
 std::vector<FLabelInfo*>				FLabelInfo::AllocatedList;
-std::unordered_map<std::string, int>	FLabelInfo::LabelUsage;
+std::unordered_map<std::string, FAddressRef>	FLabelInfo::GlobalLabelAddress;
 std::vector<FCommentBlock*>	FCommentBlock::AllocatedList;
 
 FImageData::~FImageData() 
@@ -89,6 +89,8 @@ void FCodeAnalysisPage::Initialise()
 	memset(Labels, 0, sizeof(Labels));
 	memset(CodeInfo, 0, sizeof(CodeInfo));
 	memset(CommentBlocks, 0, sizeof(CommentBlocks));
+	memset(ScopeLabel, 0, sizeof(ScopeLabel));
+	memset(MachineState, 0, sizeof(MachineState));
 
 	for (int addr = 0; addr < FCodeAnalysisPage::kPageSize; addr++)
 	{
@@ -109,6 +111,7 @@ void FCodeAnalysisPage::Reset(void)
 		CodeInfo[addr] = nullptr;
 		DataInfo[addr].Reset();
 		MachineState[addr] = nullptr;
+		ScopeLabel[addr] = nullptr;
 	}
 
 	Initialise();
@@ -290,6 +293,7 @@ bool FCodeAnalysisPage::ReadFromBuffer(FMemoryBuffer& buffer)
 }
 #endif
 
+#if 0
 void FCodeAnalysisPage::SetLabelAtAddress(const char* pLabelName, ELabelType type, uint16_t addr, bool bGlobal)
 {
 	FLabelInfo* pLabel = Labels[addr];
@@ -307,6 +311,7 @@ void FCodeAnalysisPage::SetLabelAtAddress(const char* pLabelName, ELabelType typ
 
 	pLabel->Global = bGlobal;
 }
+#endif
 
 #if 0
 void FCodeAnalysisPage::WriteToJSon(nlohmann::json& jsonOutput)

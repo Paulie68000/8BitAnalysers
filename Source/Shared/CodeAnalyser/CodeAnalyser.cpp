@@ -667,6 +667,7 @@ FLabelInfo* GenerateLabelForAddress(FCodeAnalysisState &state, FAddressRef addre
 	{
 		case ELabelType::Function:
 			snprintf(label, kLabelSize,"function_%04X", address.Address);
+			pLabel->Global = true;
 			break;
 		case ELabelType::Code:
 			snprintf(label, kLabelSize, "label_%04X", address.Address);
@@ -683,7 +684,8 @@ FLabelInfo* GenerateLabelForAddress(FCodeAnalysisState &state, FAddressRef addre
 			if (state.CPUInterface->CPUType == ECPUType::M6502 && address.Address < 256)
 				snprintf(label, kLabelSize, "zp_%02X", address.Address);
 
-			pLabel->Global = true;
+			if (bLabelOnOperand == false)
+				pLabel->Global = true;	// operand labels should be local
 		}
 		break;
         case ELabelType::Text:
@@ -902,6 +904,7 @@ bool RegisterCodeExecuted(FCodeAnalysisState &state, uint16_t pc, uint16_t oldpc
 			state.Debugger.Break();
 
 		pCodeInfo->FrameLastExecuted = state.CurrentFrameNo;
+		pCodeInfo->LastExecuted = state.ExecutionCounter;
 		pCodeInfo->ExecutionCount++;
 	}
 
@@ -910,6 +913,7 @@ bool RegisterCodeExecuted(FCodeAnalysisState &state, uint16_t pc, uint16_t oldpc
 	else if (state.CPUInterface->CPUType == ECPUType::M6502)
 		return RegisterCodeExecuted6502(state, pc, oldpc);
 
+	state.ExecutionCounter++;
 	return false;
 }
 
@@ -934,6 +938,7 @@ void RegisterDataRead(FCodeAnalysisState& state, uint16_t pc, uint16_t dataAddr)
 		{
 			pDataInfo->ReadCount++;
 			pDataInfo->LastFrameRead = state.CurrentFrameNo;
+			pDataInfo->LastRead = state.ExecutionCounter;
 			pDataInfo->Reads.RegisterAccess(state.AddressRefFromPhysicalAddress(pc));
 		
 			FCodeInfo* pCodeInfo = state.GetCodeInfoForAddress(state.AddressRefFromPhysicalAddress(pc));
@@ -949,6 +954,7 @@ void RegisterDataWrite(FCodeAnalysisState &state, uint16_t pc,uint16_t dataAddr,
 	FDataInfo* pDataInfo = state.GetWriteDataInfoForAddress(dataAddr);
 	pDataInfo->WriteCount++;
 	pDataInfo->LastFrameWritten = state.CurrentFrameNo;
+	pDataInfo->LastWritten = state.ExecutionCounter;
 	pDataInfo->Writes.RegisterAccess(pcAddr);
 
 	// check for SMC
@@ -1064,7 +1070,7 @@ FLabelInfo* AddLabel(FCodeAnalysisState &state, uint16_t address,const char *nam
 	pLabel->ByteSize = 1;
 	pLabel->Global = type == ELabelType::Function;
 	pLabel->MemoryRange = memoryRange;
-	pLabel->EnsureUniqueName();
+	pLabel->EnsureUniqueName(state.AddressRefFromPhysicalAddress(address));
 	state.SetLabelForPhysicalAddress(address, pLabel);
 
 	if (pLabel->Global)
@@ -1112,6 +1118,8 @@ void GenerateGlobalInfo(FCodeAnalysisState &state)
 	state.GlobalDataItems.clear();
 	state.GlobalFunctions.clear();
 
+	FLabelInfo* pCurrentScope = nullptr;
+
 	// Make global list from what's in all banks
 	for (auto& bank : state.GetBanks())
 	{
@@ -1120,7 +1128,7 @@ void GenerateGlobalInfo(FCodeAnalysisState &state)
 
 		for (int pageNo = 0; pageNo < bank.NoPages; pageNo++)
 		{
-			const FCodeAnalysisPage& page = bank.Pages[pageNo];
+			FCodeAnalysisPage& page = bank.Pages[pageNo];
 			const uint16_t pageBaseAddr = bank.GetMappedAddress() + (pageNo * FCodeAnalysisPage::kPageSize);
 
 			for (int pageAddr = 0; pageAddr < FCodeAnalysisPage::kPageSize; pageAddr++)
@@ -1128,11 +1136,16 @@ void GenerateGlobalInfo(FCodeAnalysisState &state)
 				FLabelInfo* pLabel = page.Labels[pageAddr];
 				if (pLabel != nullptr)
 				{
+					if (pLabel->Global == true)
+						pCurrentScope = pLabel;
+
 					if (pLabel->LabelType == ELabelType::Data && pLabel->Global)
 						state.GlobalDataItems.emplace_back(pLabel, FAddressRef(bank.Id, pageBaseAddr + pageAddr));
 					if (pLabel->LabelType == ELabelType::Function)
 						state.GlobalFunctions.emplace_back(pLabel, FAddressRef(bank.Id, pageBaseAddr + pageAddr));
 				}
+
+				page.ScopeLabel[pageAddr] = pCurrentScope;	// set scope
 			}
 
 		}
